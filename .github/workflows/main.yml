@@ -6,145 +6,55 @@ on:
 jobs:
   test-rdp-settings:
     runs-on: windows-latest
+    timeout-minutes: 10
 
     steps:
+
       - name: Test PowerShell Registry Commands
         shell: powershell
         run: |
-          Write-Host "Testing PowerShell registry command syntax..."
+          Write-Host "Testing registry paths..."
 
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0 -Force
+          $rdpPath = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
+          $tcpPath = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
 
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -Value 0 -Force
+          if (-not (Test-Path $rdpPath)) {
+              Write-Error "Terminal Server registry path not found."
+              exit 1
+          }
 
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'SecurityLayer' -Value 0 -Force
+          if (-not (Test-Path $tcpPath)) {
+              Write-Error "RDP-Tcp registry path not found."
+              exit 1
+          }
 
-          Write-Host "Registry commands completed successfully."
+          Write-Host "Both registry paths exist."
+          Write-Host "PowerShell registry test completed successfully."
 
       - name: Verify Registry Values
         shell: powershell
         run: |
-          $rdp = Get-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
-          $tcp = Get-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+          $rdpPath = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
+          $tcpPath = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
 
-          Write-Host "fDenyTSConnections: $($rdp.fDenyTSConnections)"
-          Write-Host "UserAuthentication: $($tcp.UserAuthentication)"
-          Write-Host "SecurityLayer: $($tcp.SecurityLayer)"
+          $rdp = Get-ItemProperty -Path $rdpPath
+          $tcp = Get-ItemProperty -Path $tcpPath
 
-          if ($rdp.fDenyTSConnections -ne 0) {
-            Write-Error "RDP registry setting was not applied."
-            exit 1
-          }
+          Write-Host "fDenyTSConnections = $($rdp.fDenyTSConnections)"
+          Write-Host "UserAuthentication = $($tcp.UserAuthentication)"
+          Write-Host "SecurityLayer = $($tcp.SecurityLayer)"
 
-          Write-Host "Configuration test completed successfully."              Write-Error "User creation failed"
+          Write-Host "Registry verification completed successfully."
 
-              exit 1
-
-          }
-
-
-      - name: Install Tailscale
-
+      - name: Check Remote Desktop Service
+        shell: powershell
         run: |
+          $service = Get-Service -Name TermService -ErrorAction SilentlyContinue
 
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-
-          $installerPath = "$env:TEMP\tailscale.msi"
-
-         
-
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-
-          Remove-Item $installerPath -Force
-
-
-      - name: Establish Tailscale Connection
-
-        run: |
-
-          # Bring up Tailscale with the provided auth key and set a unique hostname
-
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-
-         
-
-          # Wait for Tailscale to assign an IP
-
-          $tsIP = $null
-
-          $retries = 0
-
-          while (-not $tsIP -and $retries -lt 10) {
-
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-
-              Start-Sleep -Seconds 5
-
-              $retries++
-
+          if ($null -eq $service) {
+              Write-Host "TermService service was not found."
+              exit 0
           }
 
-         
-
-          if (-not $tsIP) {
-
-              Write-Error "Tailscale IP not assigned. Exiting."
-
-              exit 1
-
-          }
-
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-
-     
-
-      - name: Verify RDP Accessibility
-
-        run: |
-
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-
-         
-
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
-
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-
-          if (-not $testResult.TcpTestSucceeded) {
-
-              Write-Error "TCP connection to RDP port 3389 failed"
-
-              exit 1
-
-          }
-
-          Write-Host "TCP connectivity successful!"
-
-
-      - name: Maintain Connection
-
-        run: |
-
-          Write-Host "`n=== RDP ACCESS ==="
-
-          Write-Host "Address: $env:TAILSCALE_IP"
-
-          Write-Host "Username: RDP"
-
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
-
-          Write-Host "==================`n"
-
-         
-
-          # Keep runner active indefinitely (or until manually cancelled)
-
-          while ($true) {
-
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
-
-              Start-Sleep -Seconds 300
-
-          }
+          Write-Host "TermService Status: $($service.Status)"
+          Write-Host "Service check completed."
